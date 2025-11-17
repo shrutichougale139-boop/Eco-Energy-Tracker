@@ -1,0 +1,152 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Eco Home Energy Tracker</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding: 20px; background:#f7fafc; color:#111827; }
+    header { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+    .card { background:white; border-radius:12px; padding:16px; box-shadow: 0 6px 20px rgba(15,23,42,0.06); }
+    .row { display:flex; gap:14px; }
+    .col { flex:1; }
+    canvas { width:100%; height:300px; }
+    .small { font-size:0.9rem; color:#6b7280; }
+    .tips { margin-top:12px; }
+    .badge { background:#e6fffa; color:#015249; padding:6px 10px; border-radius:999px; font-weight:600; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Eco Home Energy Tracker</h1>
+    <div class="small">Live · Local</div>
+  </header>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div class="small">Instantaneous total</div>
+        <h2 id="totalWatts">— W</h2>
+        <div class="small" id="lastUpdate">No data yet</div>
+      </div>
+      <div style="text-align:right">
+        <div class="small">CO₂ (7d est.)</div>
+        <div id="co2" style="font-weight:700">— kg</div>
+        <div class="small">kWh: <span id="kwh">—</span></div>
+      </div>
+    </div>
+
+    <div style="margin-top:18px">
+      <canvas id="chart"></canvas>
+    </div>
+
+    <div class="row" style="margin-top:14px">
+      <div class="col small card">
+        <div style="display:flex;justify-content:space-between">
+          <div>Today's energy</div>
+          <div id="todayKwh">— kWh</div>
+        </div>
+        <div class="tips">
+          <strong>Tips</strong>
+          <ul>
+            <li>Turn off lights in empty rooms.</li>
+            <li>Set AC to 24–26°C and use fan mode.</li>
+            <li>Use energy star appliances and LED bulbs.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="col small card">
+        <div><strong>Devices (last samples)</strong></div>
+        <div id="devicesList"></div>
+      </div>
+    </div>
+
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const CHART = document.getElementById('chart').getContext('2d');
+let chart;
+
+async function fetchSummary(){
+  const res = await fetch('/api/summary');
+  return res.json();
+}
+
+async function fetchReadings(){
+  // last 24h
+  const now = new Date();
+  const start = new Date(now.getTime() - 24*3600*1000).toISOString();
+  const res = await fetch(`/api/readings?start=${encodeURIComponent(start)}`);
+  return res.json();
+}
+
+async function fetchDaily(){
+  const res = await fetch('/api/aggregates/daily?days=7');
+  return res.json();
+}
+
+async function fetchCO2(){
+  const res = await fetch('/api/co2?days=7');
+  return res.json();
+}
+
+function renderChart(readings){
+  // readings: [{timestamp, watts, device}, ...]
+  const labels = readings.map(r => new Date(r.timestamp).toLocaleTimeString());
+  const data = readings.map(r => r.watts);
+  if(!chart){
+    chart = new Chart(CHART, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Watts',
+          data,
+          fill: true,
+          tension: 0.2,
+        }]
+      },
+      options: {
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          y: { title: { display: true, text: 'Watts' } },
+          x: { display: true }
+        }
+      }
+    });
+  } else {
+    chart.data.labels = labels;
+    chart.data.datasets[0].data = data;
+    chart.update();
+  }
+}
+
+function renderDevices(devices){
+  const container = document.getElementById('devicesList');
+  if(!devices || devices.length===0) container.innerHTML = '<div class="small">No data</div>';
+  else {
+    container.innerHTML = devices.map(d => {
+      const t = new Date(d.timestamp).toLocaleTimeString();
+      return `<div style="margin:8px 0"><strong>${d.device}</strong> — ${Math.round(d.watts)} W <div class="small">at ${t}</div></div>`;
+    }).join('');
+  }
+}
+
+async function updateUI(){
+  const [summary, readings, daily, co2] = await Promise.all([fetchSummary(), fetchReadings(), fetchDaily(), fetchCO2()]);
+  document.getElementById('totalWatts').innerText = (summary.total_watts ?? 0).toFixed(1) + ' W';
+  document.getElementById('lastUpdate').innerText = 'Updated ' + new Date().toLocaleTimeString();
+  renderChart(readings);
+  renderDevices(summary.devices);
+  const today = daily.find(d => d.date === new Date().toISOString().slice(0,10));
+  document.getElementById('todayKwh').innerText = today ? today.kwh + ' kWh' : '0 kWh';
+  document.getElementById('co2').innerText = (co2.kgCO2 ?? 0) + ' kg';
+  document.getElementById('kwh').innerText = (co2.kwh ?? 0);
+}
+
+setInterval(updateUI, 5000);
+updateUI();
+</script>
+</body>
+</html>
